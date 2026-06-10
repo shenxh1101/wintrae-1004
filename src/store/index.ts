@@ -1,6 +1,7 @@
 import type {
   Patient, FollowUp, Sample, PlaceInspection, AbnormalItem
 } from '@/types';
+import dayjs from 'dayjs';
 
 const KEYS = {
   PATIENTS: 'cdc_patients',
@@ -9,6 +10,19 @@ const KEYS = {
   PLACES: 'cdc_places',
   ABNORMALS: 'cdc_abnormals'
 } as const;
+
+const FOLLOWUP_INTERVALS: Record<string, number> = {
+  '新型冠状病毒感染': 3,
+  '流行性感冒': 2,
+  '手足口病': 3,
+  '病毒性肝炎': 7,
+  '肺结核': 7,
+  '狂犬病': 1,
+  '艾滋病': 30,
+  '登革热': 3,
+  '细菌性痢疾': 2,
+  '其他': 3
+};
 
 const mockPatients: Patient[] = [
   {
@@ -301,3 +315,39 @@ export const storage = {
 };
 
 export const genId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+
+export const generateFollowUpPlan = (patient: Patient): FollowUp | null => {
+  const existingFollowUps = storage.getFollowUps();
+  const hasPending = existingFollowUps.some(
+    f => f.patientId === patient.id && f.status === '待随访'
+  );
+
+  if (hasPending) {
+    return null;
+  }
+
+  const interval = FOLLOWUP_INTERVALS[patient.diseaseType] || 3;
+  const planDate = dayjs(patient.reportDate).add(interval, 'day').format('YYYY-MM-DD');
+
+  return {
+    id: genId(),
+    patientId: patient.id,
+    patientName: patient.name,
+    phone: patient.phone,
+    diseaseType: patient.diseaseType,
+    planDate,
+    status: '待随访',
+    followUpType: '电话'
+  };
+};
+
+export const createFollowUpForPatient = (patient: Patient): FollowUp | null => {
+  const plan = generateFollowUpPlan(patient);
+  if (plan) {
+    const followUps = storage.getFollowUps();
+    followUps.unshift(plan);
+    storage.saveFollowUps(followUps);
+    return plan;
+  }
+  return null;
+};

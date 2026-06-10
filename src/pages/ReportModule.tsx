@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Card, Row, Col, DatePicker, Select, Button, Space, Table, Tag,
   Statistic, Tabs, message, Divider, Radio, Form, Progress,
-  List, Tooltip
+  List, Tooltip, Alert
 } from 'antd';
 import {
   BarChartOutlined, LineChartOutlined, PieChartOutlined,
@@ -373,6 +373,141 @@ const ReportModule: React.FC = () => {
     message.success(`成功导出 ${data.length} 条数据到 ${filename}`);
   };
 
+  const handleGenerateReport = () => {
+    const wb = XLSX.utils.book_new();
+    const startDate = dateRange[0].format('YYYY-MM-DD');
+    const endDate = dateRange[1].format('YYYY-MM-DD');
+    const filename = `公共卫生综合上报_${startDate}_${endDate}.xlsx`;
+
+    // 1. 上报汇总Sheet
+    const summaryData = [
+      { '项目': '统计时段', '内容': `${startDate} 至 ${endDate}` },
+      { '项目': '生成时间', '内容': dayjs().format('YYYY-MM-DD HH:mm:ss') },
+      { '项目': '---', '内容': '---' },
+      { '项目': '一、病例统计', '内容': '' },
+      { '项目': '新增病例数', '内容': filteredPatients.length },
+      { '项目': '待调查', '内容': filteredPatients.filter(p => p.status === '待调查').length },
+      { '项目': '调查中', '内容': filteredPatients.filter(p => p.status === '调查中').length },
+      { '项目': '已结案', '内容': filteredPatients.filter(p => p.status === '已结案').length },
+      { '项目': '---', '内容': '---' },
+      { '项目': '二、样本统计', '内容': '' },
+      { '项目': '样本总数', '内容': filteredSamples.length },
+      { '项目': '已采样', '内容': filteredSamples.filter(s => s.status === '已采样').length },
+      { '项目': '已送检', '内容': filteredSamples.filter(s => s.status === '已送检').length },
+      { '项目': '已接收', '内容': filteredSamples.filter(s => s.status === '已接收').length },
+      { '项目': '已出结果', '内容': filteredSamples.filter(s => s.status === '已出结果').length },
+      { '项目': '阳性样本', '内容': filteredSamples.filter(s => s.result === '阳性').length },
+      { '项目': '---', '内容': '---' },
+      { '项目': '三、随访统计', '内容': '' },
+      { '项目': '随访计划数', '内容': filteredFollowUps.length },
+      { '项目': '待随访', '内容': filteredFollowUps.filter(f => f.status === '待随访').length },
+      { '项目': '随访中', '内容': filteredFollowUps.filter(f => f.status === '随访中').length },
+      { '项目': '已完成', '内容': filteredFollowUps.filter(f => f.status === '已完成').length },
+      { '项目': '已失访', '内容': filteredFollowUps.filter(f => f.status === '已失访').length },
+      { '项目': '---', '内容': '---' },
+      { '项目': '四、重点场所统计', '内容': '' },
+      { '项目': '巡查次数', '内容': filteredPlaces.length },
+      { '项目': '学校', '内容': filteredPlaces.filter(p => p.placeType === '学校').length },
+      { '项目': '市场', '内容': filteredPlaces.filter(p => p.placeType === '市场').length },
+      { '项目': '养老机构', '内容': filteredPlaces.filter(p => p.placeType === '养老机构').length },
+      { '项目': '待整改', '内容': filteredPlaces.filter(p => p.status === '待整改').length },
+      { '项目': '已整改', '内容': filteredPlaces.filter(p => p.status === '已整改').length }
+    ];
+    const ws1 = XLSX.utils.json_to_sheet(summaryData);
+    ws1['!cols'] = [{ wch: 20 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws1, '上报汇总');
+
+    // 2. 病例明细Sheet
+    const caseHeaders = ['病例编号', '姓名', '性别', '年龄', '身份证号', '联系电话', '现住址', '疾病类型', '发病日期', '报告日期', '症状', '状态', '登记时间'];
+    const caseData = filteredPatients.length > 0 ? filteredPatients.map(p => ({
+      '病例编号': p.caseNo,
+      '姓名': p.name,
+      '性别': p.gender,
+      '年龄': p.age,
+      '身份证号': p.idCard,
+      '联系电话': p.phone,
+      '现住址': p.address,
+      '疾病类型': p.diseaseType,
+      '发病日期': p.onsetDate,
+      '报告日期': p.reportDate,
+      '症状': p.symptoms.join('、'),
+      '状态': p.status,
+      '登记时间': p.createdAt
+    })) : [Object.fromEntries(caseHeaders.map(h => [h, '']))];
+    const ws2 = XLSX.utils.json_to_sheet(caseData);
+    ws2['!cols'] = caseHeaders.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws2, '病例明细');
+
+    // 3. 样本明细Sheet
+    const sampleHeaders = ['样本编号', '病例编号', '患者姓名', '疾病类型', '样本类型', '采样日期', '采样人', '送检日期', '送检人', '接收日期', '接收人', '检测机构', '检测结果', '结果日期', '状态'];
+    const sampleData = filteredSamples.length > 0 ? filteredSamples.map(s => ({
+      '样本编号': s.sampleNo,
+      '病例编号': s.caseNo || '',
+      '患者姓名': s.patientName,
+      '疾病类型': s.diseaseType || '',
+      '样本类型': s.sampleType,
+      '采样日期': s.collectDate,
+      '采样人': s.collector,
+      '送检日期': s.sendDate || '',
+      '送检人': s.sender || '',
+      '接收日期': s.receiveDate || '',
+      '接收人': s.receiver || '',
+      '检测机构': s.labName || '',
+      '检测结果': s.result || '',
+      '结果日期': s.resultDate || '',
+      '状态': s.status
+    })) : [Object.fromEntries(sampleHeaders.map(h => [h, '']))];
+    const ws3 = XLSX.utils.json_to_sheet(sampleData);
+    ws3['!cols'] = sampleHeaders.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws3, '样本明细');
+
+    // 4. 随访明细Sheet
+    const followupHeaders = ['随访编号', '病例ID', '患者姓名', '联系电话', '疾病类型', '计划随访日期', '随访类型', '随访状态', '通话结果', '健康状况', '失访原因', '随访时间', '操作人员', '备注'];
+    const followupData = filteredFollowUps.length > 0 ? filteredFollowUps.map(f => ({
+      '随访编号': f.id,
+      '病例ID': f.patientId,
+      '患者姓名': f.patientName,
+      '联系电话': f.phone,
+      '疾病类型': f.diseaseType,
+      '计划随访日期': f.planDate,
+      '随访类型': f.followUpType,
+      '随访状态': f.status,
+      '通话结果': f.callResult || '',
+      '健康状况': f.healthStatus || '',
+      '失访原因': f.lossReason || '',
+      '随访时间': f.followUpTime || '',
+      '操作人员': f.operator || '',
+      '备注': f.remarks || ''
+    })) : [Object.fromEntries(followupHeaders.map(h => [h, '']))];
+    const ws4 = XLSX.utils.json_to_sheet(followupData);
+    ws4['!cols'] = followupHeaders.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws4, '随访明细');
+
+    // 5. 重点场所Sheet
+    const placeHeaders = ['场所名称', '场所类型', '地址', '联系人', '联系电话', '巡查日期', '巡查人员', '合格项数', '不合格项数', '发现问题', '整改要求', '状态', '下次巡查日期'];
+    const placeData = filteredPlaces.length > 0 ? filteredPlaces.map(p => ({
+      '场所名称': p.placeName,
+      '场所类型': p.placeType,
+      '地址': p.address,
+      '联系人': p.contactPerson,
+      '联系电话': p.contactPhone,
+      '巡查日期': p.inspectDate,
+      '巡查人员': p.inspector,
+      '合格项数': p.items.filter(i => i.result === '合格').length,
+      '不合格项数': p.items.filter(i => i.result === '不合格').length,
+      '发现问题': p.issues || '',
+      '整改要求': p.rectification || '',
+      '状态': p.status,
+      '下次巡查日期': p.nextInspectDate || ''
+    })) : [Object.fromEntries(placeHeaders.map(h => [h, '']))];
+    const ws5 = XLSX.utils.json_to_sheet(placeData);
+    ws5['!cols'] = placeHeaders.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws5, '重点场所');
+
+    XLSX.writeFile(wb, filename);
+    message.success(`成功生成综合上报文件：${filename}`);
+  };
+
   return (
     <div className="page-container">
       <div className="page-card" style={{ padding: 20, marginBottom: 20 }}>
@@ -657,6 +792,33 @@ const ReportModule: React.FC = () => {
               label: <span><FileTextOutlined /> 综合汇总</span>,
               children: (
                 <div>
+                  <Card
+                    title={<Space><FileExcelOutlined /> 综合上报文件</Space>}
+                    size="small"
+                    style={{ marginBottom: 16 }}
+                  >
+                    <Alert
+                      message="上报说明"
+                      description="按当前选择的时间范围汇总病例、样本、随访和重点场所数据，生成规范的多Sheet Excel文件，支持导出上报。"
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                    />
+                    <Space>
+                      <span style={{ color: '#666' }}>
+                        统计范围：{dateRange[0].format('YYYY-MM-DD')} 至 {dateRange[1].format('YYYY-MM-DD')}
+                      </span>
+                      <Button
+                        type="primary"
+                        icon={<ExportOutlined />}
+                        size="large"
+                        onClick={handleGenerateReport}
+                      >
+                        生成并导出综合上报 Excel
+                      </Button>
+                    </Space>
+                  </Card>
+
                   <Row gutter={[16, 16]}>
                     <Col span={12}>
                       <Card

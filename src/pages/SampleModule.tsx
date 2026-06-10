@@ -11,7 +11,7 @@ import {
   ExclamationCircleOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import type { Sample } from '@/types';
+import type { Sample, Patient } from '@/types';
 import { storage, genId } from '@/store';
 import dayjs from 'dayjs';
 
@@ -45,6 +45,7 @@ const resultMap: Record<string, { color: string }> = {
 
 const SampleModule: React.FC = () => {
   const [data, setData] = useState<Sample[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
   const [filteredData, setFilteredData] = useState<Sample[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
@@ -57,7 +58,9 @@ const SampleModule: React.FC = () => {
 
   useEffect(() => {
     const list = storage.getSamples();
+    const patientList = storage.getPatients();
     setData(list);
+    setPatients(patientList);
     setFilteredData(list);
   }, []);
 
@@ -136,6 +139,8 @@ const SampleModule: React.FC = () => {
           `YP${dayjs().format('YYYYMM')}${String(data.length + 1).padStart(3, '0')}`,
         patientId: values.patientId || 'P' + genId(),
         patientName: values.patientName,
+        caseNo: values.caseNo,
+        diseaseType: values.diseaseType,
         sampleType: values.sampleType,
         collectDate: values.collectDate.format('YYYY-MM-DD'),
         collector: values.collector,
@@ -193,7 +198,19 @@ const SampleModule: React.FC = () => {
       fixed: 'left',
       render: (t) => <Tag color="blue">{t}</Tag>
     },
+    {
+      title: '病例编号',
+      dataIndex: 'caseNo',
+      width: 110,
+      render: (d) => d || <span style={{ color: '#ccc' }}>-</span>
+    },
     { title: '患者姓名', dataIndex: 'patientName', width: 100 },
+    {
+      title: '疾病类型',
+      dataIndex: 'diseaseType',
+      width: 120,
+      render: (d) => d || <span style={{ color: '#ccc' }}>-</span>
+    },
     { title: '样本类型', dataIndex: 'sampleType', width: 110 },
     {
       title: '采样日期',
@@ -298,47 +315,109 @@ const SampleModule: React.FC = () => {
     switch (currentStep) {
       case 0:
         return (
-          <Row gutter={16}>
-            <Col span={12}>
+          <>
+            {!isEditMode && (
+              <Alert
+                message="提示"
+                description="可从已有病例中选择患者，自动带出姓名、病例编号和疾病类型。"
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )}
+            {!isEditMode && (
               <Form.Item
-                label="患者姓名"
-                name="patientName"
-                rules={[{ required: true, message: '请输入患者姓名' }]}
-              >
-                <Input placeholder="请输入患者姓名" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                label="样本类型"
-                name="sampleType"
-                rules={[{ required: true, message: '请选择样本类型' }]}
+                label="关联病例"
+                name="selectedPatientId"
               >
                 <Select
-                  placeholder="请选择样本类型"
-                  options={SAMPLE_TYPES.map(s => ({ label: s, value: s }))}
+                  placeholder="从已有病例中选择患者（可选）"
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  options={patients.map(p => ({
+                    label: `${p.name} - ${p.caseNo} - ${p.diseaseType}`,
+                    value: p.id,
+                    patient: p
+                  }))}
+                  onChange={(value, option) => {
+                    if (value && option?.patient) {
+                      const p = option.patient as Patient;
+                      form.setFieldsValue({
+                        patientId: p.id,
+                        patientName: p.name,
+                        caseNo: p.caseNo,
+                        diseaseType: p.diseaseType
+                      });
+                    } else {
+                      form.setFieldsValue({
+                        patientId: undefined,
+                        caseNo: undefined,
+                        diseaseType: undefined
+                      });
+                    }
+                  }}
                 />
               </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                label="采样日期"
-                name="collectDate"
-                rules={[{ required: true, message: '请选择采样日期' }]}
-              >
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                label="采样人员"
-                name="collector"
-                rules={[{ required: true, message: '请输入采样人员' }]}
-              >
-                <Input placeholder="请输入采样人员姓名" />
-              </Form.Item>
-            </Col>
-          </Row>
+            )}
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item
+                  label="患者姓名"
+                  name="patientName"
+                  rules={[{ required: true, message: '请输入患者姓名' }]}
+                >
+                  <Input placeholder="请输入患者姓名" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  label="疾病类型"
+                  name="diseaseType"
+                >
+                  <Input placeholder="自动带出或手动输入" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  label="样本类型"
+                  name="sampleType"
+                  rules={[{ required: true, message: '请选择样本类型' }]}
+                >
+                  <Select
+                    placeholder="请选择样本类型"
+                    options={SAMPLE_TYPES.map(s => ({ label: s, value: s }))}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  label="病例编号"
+                  name="caseNo"
+                >
+                  <Input placeholder="自动带出或手动输入" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  label="采样日期"
+                  name="collectDate"
+                  rules={[{ required: true, message: '请选择采样日期' }]}
+                >
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  label="采样人员"
+                  name="collector"
+                  rules={[{ required: true, message: '请输入采样人员' }]}
+                >
+                  <Input placeholder="请输入采样人员姓名" />
+                </Form.Item>
+              </Col>
+            </Row>
+          </>
         );
       case 1:
         return (
@@ -701,6 +780,8 @@ const SampleModule: React.FC = () => {
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="患者姓名">{viewRecord.patientName}</Descriptions.Item>
+              <Descriptions.Item label="病例编号">{viewRecord.caseNo || '-'}</Descriptions.Item>
+              <Descriptions.Item label="疾病类型">{viewRecord.diseaseType || '-'}</Descriptions.Item>
               <Descriptions.Item label="样本类型">{viewRecord.sampleType}</Descriptions.Item>
             </Descriptions>
 

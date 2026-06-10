@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Table, Button, Space, Input, Select, DatePicker, Tag, Modal,
   Form, message, Divider, Descriptions, Card, Row, Col, Statistic,
@@ -339,15 +339,18 @@ const PlaceModule: React.FC = () => {
     }
   ];
 
-  const stats = {
-    total: data.length,
-    normal: data.filter(p => p.status === '正常').length,
-    pending: data.filter(p => p.status === '待整改').length,
-    fixed: data.filter(p => p.status === '已整改').length,
-    school: data.filter(p => p.placeType === '学校').length,
-    market: data.filter(p => p.placeType === '市场').length,
-    nursing: data.filter(p => p.placeType === '养老机构').length
-  };
+  const stats = useMemo(() => {
+    const sourceData = typeFilter === '全部' ? data : filteredData;
+    return {
+      total: sourceData.length,
+      normal: sourceData.filter(p => p.status === '正常').length,
+      pending: sourceData.filter(p => p.status === '待整改').length,
+      fixed: sourceData.filter(p => p.status === '已整改').length,
+      school: data.filter(p => p.placeType === '学校').length,
+      market: data.filter(p => p.placeType === '市场').length,
+      nursing: data.filter(p => p.placeType === '养老机构').length
+    };
+  }, [data, filteredData, typeFilter]);
 
   return (
     <div className="page-container">
@@ -355,47 +358,64 @@ const PlaceModule: React.FC = () => {
         <Col span={4}>
           <Card className="stat-card">
             <Statistic
-              title="巡查场所总数"
+              title={typeFilter === '全部' ? '巡查场所总数' : `${typeFilter}巡查数`}
               value={stats.total}
               prefix={<BankOutlined />}
               valueStyle={{ color: '#1677ff' }}
             />
           </Card>
         </Col>
+        {typeFilter === '全部' && (
+          <>
+            <Col span={4}>
+              <Card className="stat-card">
+                <Statistic
+                  title="学校"
+                  value={stats.school}
+                  prefix={<TeamOutlined />}
+                  valueStyle={{ color: '#1890ff' }}
+                />
+              </Card>
+            </Col>
+            <Col span={4}>
+              <Card className="stat-card">
+                <Statistic
+                  title="市场"
+                  value={stats.market}
+                  prefix={<ShopOutlined />}
+                  valueStyle={{ color: '#fa8c16' }}
+                />
+              </Card>
+            </Col>
+            <Col span={4}>
+              <Card className="stat-card">
+                <Statistic
+                  title="养老机构"
+                  value={stats.nursing}
+                  prefix={<HomeOutlined />}
+                  valueStyle={{ color: '#52c41a' }}
+                />
+              </Card>
+            </Col>
+          </>
+        )}
+        {typeFilter !== '全部' && (
+          <Col span={4}>
+            <Card className="stat-card">
+              <Statistic
+                title="占全部比例"
+                value={data.length > 0 ? Math.round((stats.total / data.length) * 100) : 0}
+                suffix="%"
+                prefix={<FileTextOutlined />}
+                valueStyle={{ color: '#722ed1' }}
+              />
+            </Card>
+          </Col>
+        )}
         <Col span={4}>
           <Card className="stat-card">
             <Statistic
-              title="学校"
-              value={stats.school}
-              prefix={<TeamOutlined />}
-              valueStyle={{ color: '#1890ff' }}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card className="stat-card">
-            <Statistic
-              title="市场"
-              value={stats.market}
-              prefix={<ShopOutlined />}
-              valueStyle={{ color: '#fa8c16' }}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card className="stat-card">
-            <Statistic
-              title="养老机构"
-              value={stats.nursing}
-              prefix={<HomeOutlined />}
-              valueStyle={{ color: '#52c41a' }}
-            />
-          </Card>
-        </Col>
-        <Col span={4}>
-          <Card className="stat-card">
-            <Statistic
-              title="待整改"
+              title={typeFilter === '全部' ? '待整改' : `${typeFilter}待整改`}
               value={stats.pending}
               prefix={<ExclamationOutlined />}
               valueStyle={{ color: '#faad14' }}
@@ -405,7 +425,7 @@ const PlaceModule: React.FC = () => {
         <Col span={4}>
           <Card className="stat-card">
             <Statistic
-              title="正常"
+              title={typeFilter === '全部' ? '正常' : `${typeFilter}正常`}
               value={stats.normal}
               prefix={<CheckOutlined />}
               valueStyle={{ color: '#52c41a' }}

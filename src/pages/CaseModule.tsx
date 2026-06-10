@@ -2,16 +2,17 @@ import React, { useState, useEffect } from 'react';
 import {
   Table, Button, Space, Input, Select, DatePicker, Tag, Modal,
   Form, InputNumber, Radio, Upload, message, Divider, Descriptions,
-  Card, Row, Col, Statistic, Popconfirm, Tooltip, Checkbox
+  Card, Row, Col, Statistic, Popconfirm, Tooltip, Checkbox, List
 } from 'antd';
 import {
   PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined,
   EyeOutlined, UploadOutlined, FileTextOutlined, DownloadOutlined,
-  ExclamationCircleOutlined, CheckCircleOutlined, ClockCircleOutlined
+  ExclamationCircleOutlined, CheckCircleOutlined, ClockCircleOutlined,
+  FileOutlined, FolderOpenOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { Patient, ContactRecord, Attachment } from '@/types';
-import { storage, genId } from '@/store';
+import { storage, genId, createFollowUpForPatient } from '@/store';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
@@ -57,6 +58,8 @@ const CaseModule: React.FC = () => {
   const [editingContact, setEditingContact] = useState<ContactRecord | null>(null);
   const [contactList, setContactList] = useState<ContactRecord[]>([]);
   const [attachmentList, setAttachmentList] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [tempCaseId, setTempCaseId] = useState<string>('');
 
   useEffect(() => {
     const list = storage.getPatients();
@@ -97,6 +100,8 @@ const CaseModule: React.FC = () => {
   };
 
   const openAddModal = () => {
+    const newTempId = genId();
+    setTempCaseId(newTempId);
     setEditPatient(null);
     setContactList([]);
     setAttachmentList([]);
@@ -109,6 +114,7 @@ const CaseModule: React.FC = () => {
   };
 
   const openEditModal = (record: Patient) => {
+    setTempCaseId(record.id);
     setEditPatient(record);
     setContactList([...record.contactHistory]);
     setAttachmentList([...record.attachments]);
@@ -128,9 +134,11 @@ const CaseModule: React.FC = () => {
   const handleSave = async () => {
     try {
       const values = await form.validateFields();
+      const caseId = editPatient?.id || tempCaseId;
+
       const newData: Patient = {
         ...values,
-        id: editPatient?.id || genId(),
+        id: caseId,
         caseNo: editPatient?.caseNo ||
           `JB${dayjs().format('YYYYMM')}${String(data.length + 1).padStart(3, '0')}`,
         reportDate: values.reportDate.format('YYYY-MM-DD'),
@@ -143,16 +151,32 @@ const CaseModule: React.FC = () => {
       };
 
       let updated: Patient[];
+      let isNew = false;
+
       if (editPatient) {
         updated = data.map(p => p.id === editPatient.id ? newData : p);
         message.success('病例修改成功');
       } else {
         updated = [newData, ...data];
+        isNew = true;
         message.success('病例登记成功');
       }
+
       setData(updated);
       setFilteredData(updated);
       storage.savePatients(updated);
+
+      if (isNew) {
+        const followUp = createFollowUpForPatient(newData);
+        if (followUp) {
+          message.info(
+            `已自动生成随访计划，计划随访日期：${followUp.planDate}`
+          );
+        } else {
+          message.info('该病例已有待随访任务，未重复生成');
+        }
+      }
+
       setModalVisible(false);
     } catch {
       // 表单验证错误，不处理
@@ -211,6 +235,89 @@ const CaseModule: React.FC = () => {
     setContactList(contactList.filter(c => c.id !== id));
   };
 
+  const handleAttachmentUpload = (file: File) => {
+    if (!tempCaseId) {
+      message.error('请先保存病例基础信息后再上传附件');
+      return Upload.LIST_IGNORE;
+    }
+
+    setUploading(true);
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const base64Data = e.target?.result as string;
+        const result = await window.api.uploadAttachment({
+          caseId: tempCaseId,
+          fileName: file.name,
+          fileData: base64Data,
+          fileType: file.type || 'application/octet-stream',
+          fileSize: file.size
+        });
+
+        if (result.success) {
+          const newAttachment: Attachment = {
+            id: genId(),
+            fileName: result.originalName,
+            fileSize: file.size,
+            uploadTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+            fileType: file.type || '未知',
+            filePath: result.filePath,
+            storedName: result.storedName
+          };
+          setAttachmentList([...attachmentList, newAttachment]);
+          message.success('附件上传成功');
+        } else {
+          message.error(`上传失败：${result.error}`);
+        }
+      } catch (error: any) {
+        message.error(`上传失败：${error.message}`);
+      } finally {
+        setUploading(false);
+      }
+    };
+
+    reader.readAsDataURL(file);
+    return Upload.LIST_IGNORE;
+  };
+
+  const handleRemoveAttachment = async (attachment: Attachment) => {
+    try {
+      await window.api.deleteAttachment({ filePath: attachment.filePath });
+      setAttachmentList(attachmentList.filter(a => a.id !== attachment.id));
+      message.success('附件已删除');
+    } catch (error: any) {
+      message.error(`删除失败：${error.message}`);
+    }
+  };
+
+  const handleOpenAttachment = async (attachment: Attachment) => {
+    try {
+      const result = await window.api.openAttachment({ filePath: attachment.filePath });
+      if (!result.success) {
+        message.error(`打开失败：${result.error}`);
+      }
+    } catch (error: any) {
+      message.error(`打开失败：${error.message}`);
+    }
+  };
+
+  const handleExportAttachment = async (attachment: Attachment) => {
+    try {
+      const result = await window.api.exportAttachment({
+        filePath: attachment.filePath,
+        fileName: attachment.fileName
+      });
+      if (result.success) {
+        message.success(`已导出到：${result.exportPath}`);
+      } else if (!result.canceled) {
+        message.error(`导出失败：${result.error}`);
+      }
+    } catch (error: any) {
+      message.error(`导出失败：${error.message}`);
+    }
+  };
+
   const columns: ColumnsType<Patient> = [
     {
       title: '病例编号',
@@ -244,6 +351,14 @@ const CaseModule: React.FC = () => {
       title: '报告日期',
       dataIndex: 'reportDate',
       width: 110
+    },
+    {
+      title: '附件',
+      dataIndex: 'attachments',
+      width: 90,
+      render: (list: Attachment[]) => list.length > 0 ? (
+        <Tag color="purple">{list.length} 份</Tag>
+      ) : <span style={{ color: '#ccc' }}>-</span>
     },
     {
       title: '状态',
@@ -442,7 +557,7 @@ const CaseModule: React.FC = () => {
           columns={columns}
           dataSource={filteredData}
           rowKey="id"
-          scroll={{ x: 1400 }}
+          scroll={{ x: 1600 }}
           pagination={{
             showSizeChanger: true,
             showQuickJumper: true,
@@ -461,6 +576,7 @@ const CaseModule: React.FC = () => {
         okText="保存"
         cancelText="取消"
         zIndex={1000}
+        maskClosable={false}
       >
         <Form
           form={form}
@@ -610,40 +726,83 @@ const CaseModule: React.FC = () => {
           )}
 
           <Divider orientation="left" plain>附件上传</Divider>
-          <Upload
-            multiple
-            beforeUpload={(file) => {
-              const att: Attachment = {
-                id: genId(),
-                fileName: file.name,
-                fileSize: file.size,
-                uploadTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-                fileType: file.type || '未知'
-              };
-              setAttachmentList([...attachmentList, att]);
-              return false;
-            }}
-            onRemove={(file) => {
-              const idx = attachmentList.findIndex(a => a.fileName === file.name);
-              if (idx > -1) {
-                setAttachmentList(attachmentList.filter((_, i) => i !== idx));
-              }
-              return true;
-            }}
-          >
-            <Button icon={<UploadOutlined />}>上传病历/检验报告等附件</Button>
-          </Upload>
-          {attachmentList.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              {attachmentList.map(a => (
-                <Tag key={a.id} color="blue" style={{ marginBottom: 8 }} closable
-                  onClose={() => setAttachmentList(attachmentList.filter(x => x.id !== a.id))}>
-                  <FileTextOutlined /> {a.fileName}
-                  <span style={{ marginLeft: 8, color: '#999', fontSize: 12 }}>
-                    ({(a.fileSize / 1024).toFixed(1)} KB)
-                  </span>
-                </Tag>
-              ))}
+          <div style={{ marginBottom: 12 }}>
+            <Upload
+              multiple
+              beforeUpload={handleAttachmentUpload}
+              showUploadList={false}
+            >
+              <Button
+                icon={<UploadOutlined />}
+                loading={uploading}
+                type="primary"
+              >
+                上传病历/检验报告等附件
+              </Button>
+            </Upload>
+            <span style={{ marginLeft: 12, color: '#999', fontSize: 12 }}>
+              支持 PDF、Word、Excel、图片等格式，文件将保存在本地
+            </span>
+          </div>
+          {attachmentList.length > 0 ? (
+            <List
+              size="small"
+              dataSource={attachmentList}
+              renderItem={(item) => (
+                <List.Item
+                  actions={[
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<FolderOpenOutlined />}
+                      onClick={() => handleOpenAttachment(item)}
+                    >
+                      打开
+                    </Button>,
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      onClick={() => handleExportAttachment(item)}
+                    >
+                      导出
+                    </Button>,
+                    <Button
+                      type="link"
+                      size="small"
+                      danger
+                      onClick={() => handleRemoveAttachment(item)}
+                    >
+                      删除
+                    </Button>
+                  ]}
+                  style={{
+                    padding: '8px 12px',
+                    background: '#fafafa',
+                    borderRadius: 4,
+                    marginBottom: 8
+                  }}
+                >
+                  <List.Item.Meta
+                    avatar={<FileOutlined style={{ color: '#1677ff', fontSize: 20 }} />}
+                    title={item.fileName}
+                    description={
+                      <Space size={12}>
+                        <span style={{ color: '#999' }}>
+                          大小: {(item.fileSize / 1024).toFixed(1)} KB
+                        </span>
+                        <span style={{ color: '#999' }}>
+                          上传时间: {item.uploadTime}
+                        </span>
+                      </Space>
+                    }
+                  />
+                </List.Item>
+              )}
+            />
+          ) : (
+            <div style={{ textAlign: 'center', padding: 20, color: '#999', border: '1px dashed #d9d9d9', borderRadius: 4 }}>
+              暂无附件，请点击上方按钮上传
             </div>
           )}
         </Form>
@@ -729,6 +888,7 @@ const CaseModule: React.FC = () => {
         title="病例详情"
         open={detailVisible}
         onCancel={() => setDetailVisible(false)}
+        width={900}
         footer={[
           <Button key="close" onClick={() => setDetailVisible(false)}>关闭</Button>,
           <Button
@@ -743,10 +903,9 @@ const CaseModule: React.FC = () => {
             编辑
           </Button>
         ]}
-        width={900}
       >
         {viewPatient && (
-          <div>
+          <div style={{ maxHeight: '70vh', overflowY: 'auto', paddingRight: 8 }}>
             <Descriptions title="基础信息" bordered column={2} size="small">
               <Descriptions.Item label="病例编号">{viewPatient.caseNo}</Descriptions.Item>
               <Descriptions.Item label="状态">
@@ -795,18 +954,59 @@ const CaseModule: React.FC = () => {
               <div style={{ color: '#999', padding: 12 }}>无接触史记录</div>
             )}
 
-            {viewPatient.attachments.length > 0 && (
-              <>
-                <Divider plain orientation="left">附件列表</Divider>
-                {viewPatient.attachments.map(a => (
-                  <Tag key={a.id} color="blue" style={{ marginBottom: 8 }}>
-                    <FileTextOutlined /> {a.fileName}
-                    <Button type="link" size="small" icon={<DownloadOutlined />}>
-                      下载
-                    </Button>
-                  </Tag>
-                ))}
-              </>
+            <Divider plain orientation="left">附件列表 ({viewPatient.attachments.length})</Divider>
+            {viewPatient.attachments.length > 0 ? (
+              <List
+                size="small"
+                dataSource={viewPatient.attachments}
+                renderItem={(item) => (
+                  <List.Item
+                    actions={[
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<FolderOpenOutlined />}
+                        onClick={() => handleOpenAttachment(item)}
+                      >
+                        打开
+                      </Button>,
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<DownloadOutlined />}
+                        onClick={() => handleExportAttachment(item)}
+                      >
+                        导出
+                      </Button>
+                    ]}
+                    style={{
+                      padding: '8px 12px',
+                      background: '#fafafa',
+                      borderRadius: 4,
+                      marginBottom: 8
+                    }}
+                  >
+                    <List.Item.Meta
+                      avatar={<FileOutlined style={{ color: '#1677ff', fontSize: 20 }} />}
+                      title={item.fileName}
+                      description={
+                        <Space size={12}>
+                          <span style={{ color: '#999' }}>
+                            大小: {(item.fileSize / 1024).toFixed(1)} KB
+                          </span>
+                          <span style={{ color: '#999' }}>
+                            上传: {item.uploadTime}
+                          </span>
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <div style={{ color: '#999', padding: 12, textAlign: 'center' }}>
+                暂无附件
+              </div>
             )}
           </div>
         )}

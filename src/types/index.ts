@@ -35,6 +35,8 @@ export interface Attachment {
   fileSize: number;
   uploadTime: string;
   fileType: string;
+  filePath: string;
+  storedName: string;
 }
 
 export interface FollowUp {
@@ -59,6 +61,8 @@ export interface Sample {
   sampleNo: string;
   patientId: string;
   patientName: string;
+  caseNo?: string;
+  diseaseType?: string;
   sampleType: string;
   collectDate: string;
   collector: string;
