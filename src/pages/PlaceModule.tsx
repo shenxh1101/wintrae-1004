@@ -12,7 +12,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { PlaceInspection, InspectionItem } from '@/types';
-import { storage, genId } from '@/store';
+import { storage, genId, checkPlaceAbnormal } from '@/store';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
@@ -87,6 +87,7 @@ const PlaceModule: React.FC = () => {
   const [placeType, setPlaceType] = useState<string>('学校');
   const [inspectionItems, setInspectionItems] = useState<InspectionItem[]>([]);
   const [typeFilter, setTypeFilter] = useState<string>('全部');
+  const [pagination, setPagination] = useState({ current: 1, pageSize: 10 });
 
   useEffect(() => {
     const list = storage.getPlaces();
@@ -119,12 +120,14 @@ const PlaceModule: React.FC = () => {
       });
     }
     setFilteredData(result);
+    setPagination(p => ({ ...p, current: 1 }));
   };
 
   const handleReset = () => {
     searchForm.resetFields();
     setTypeFilter('全部');
     setFilteredData(data);
+    setPagination({ current: 1, pageSize: 10 });
   };
 
   const initInspectionItems = (type: string) => {
@@ -210,6 +213,14 @@ const PlaceModule: React.FC = () => {
       setData(updated);
       setFilteredData(updated);
       storage.savePlaces(updated);
+
+      if (computedStatus === '待整改') {
+        const abnormal = checkPlaceAbnormal(newRecord);
+        if (abnormal) {
+          message.warning(`场所检查发现问题待整改，已自动加入异常清单`);
+        }
+      }
+
       setModalVisible(false);
     } catch {
       // 表单验证错误
@@ -452,6 +463,7 @@ const PlaceModule: React.FC = () => {
             value={typeFilter}
             onChange={(e) => {
               setTypeFilter(e.target.value);
+              setPagination(p => ({ ...p, current: 1 }));
               handleSearch(searchForm.getFieldsValue());
             }}
             buttonStyle="solid"
@@ -502,10 +514,13 @@ const PlaceModule: React.FC = () => {
           rowKey="id"
           scroll={{ x: 1500 }}
           pagination={{
+            ...pagination,
             showSizeChanger: true,
             showQuickJumper: true,
             showTotal: (total) => `共 ${total} 条记录`,
-            pageSize: 10
+            onChange: (page, pageSize) => {
+              setPagination({ current: page, pageSize });
+            }
           }}
         />
       </div>

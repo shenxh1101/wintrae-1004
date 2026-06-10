@@ -14,8 +14,8 @@ import {
 import ReactECharts from 'echarts-for-react';
 import type { ColumnsType } from 'antd/es/table';
 import * as XLSX from 'xlsx';
-import type { AbnormalItem } from '@/types';
-import { storage } from '@/store';
+import type { AbnormalItem, ReportBatch } from '@/types';
+import { storage, genId } from '@/store';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
@@ -33,15 +33,22 @@ const ReportModule: React.FC = () => {
   ]);
   const [diseaseType, setDiseaseType] = useState('全部');
   const [abnormalData, setAbnormalData] = useState<AbnormalItem[]>([]);
+  const [reportBatches, setReportBatches] = useState<ReportBatch[]>([]);
   const [activeTab, setActiveTab] = useState('trend');
+  const [riskLevelFilter, setRiskLevelFilter] = useState<string>('全部');
 
   const patients = storage.getPatients();
   const followUps = storage.getFollowUps();
   const samples = storage.getSamples();
   const places = storage.getPlaces();
 
-  useEffect(() => {
+  const loadData = () => {
     setAbnormalData(storage.getAbnormals());
+    setReportBatches(storage.getReportBatches());
+  };
+
+  useEffect(() => {
+    loadData();
   }, []);
 
   const filterDate = (dateStr: string) => {
@@ -67,6 +74,11 @@ const ReportModule: React.FC = () => {
   const filteredFollowUps = useMemo(() =>
     followUps.filter(f => filterDate(f.planDate)),
     [followUps, dateRange]);
+
+  const filteredAbnormalData = useMemo(() => {
+    if (riskLevelFilter === '全部') return abnormalData;
+    return abnormalData.filter(a => a.level === riskLevelFilter);
+  }, [abnormalData, riskLevelFilter]);
 
   const generateTrendData = () => {
     const result: any[] = [];
@@ -505,7 +517,176 @@ const ReportModule: React.FC = () => {
     XLSX.utils.book_append_sheet(wb, ws5, '重点场所');
 
     XLSX.writeFile(wb, filename);
+
+    const newBatch: ReportBatch = {
+      id: genId(),
+      batchNo: `BB${dayjs().format('YYYYMMDDHHmmss')}`,
+      startDate,
+      endDate,
+      generateTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+      caseCount: filteredPatients.length,
+      sampleCount: filteredSamples.length,
+      followUpCount: filteredFollowUps.length,
+      placeCount: filteredPlaces.length,
+      filePath: filename,
+      fileName: filename,
+      operator: '当前用户'
+    };
+
+    const batches = storage.getReportBatches();
+    batches.unshift(newBatch);
+    storage.saveReportBatches(batches);
+    setReportBatches(batches);
+
     message.success(`成功生成综合上报文件：${filename}`);
+  };
+
+  const handleReExportBatch = (batch: ReportBatch) => {
+    const wb = XLSX.utils.book_new();
+    const startDate = batch.startDate;
+    const endDate = batch.endDate;
+    const filename = batch.fileName;
+
+    const batchPatients = patients.filter(p => {
+      const d = dayjs(p.reportDate);
+      return d.isAfter(dayjs(startDate).subtract(1, 'day')) && d.isBefore(dayjs(endDate).add(1, 'day'));
+    });
+    const batchSamples = samples.filter(s => {
+      const d = dayjs(s.collectDate);
+      return d.isAfter(dayjs(startDate).subtract(1, 'day')) && d.isBefore(dayjs(endDate).add(1, 'day'));
+    });
+    const batchFollowUps = followUps.filter(f => {
+      const d = dayjs(f.planDate);
+      return d.isAfter(dayjs(startDate).subtract(1, 'day')) && d.isBefore(dayjs(endDate).add(1, 'day'));
+    });
+    const batchPlaces = places.filter(p => {
+      const d = dayjs(p.inspectDate);
+      return d.isAfter(dayjs(startDate).subtract(1, 'day')) && d.isBefore(dayjs(endDate).add(1, 'day'));
+    });
+
+    const summaryData = [
+      { '项目': '统计时段', '内容': `${startDate} 至 ${endDate}` },
+      { '项目': '生成时间', '内容': batch.generateTime },
+      { '项目': '批次号', '内容': batch.batchNo },
+      { '项目': '---', '内容': '---' },
+      { '项目': '一、病例统计', '内容': '' },
+      { '项目': '新增病例数', '内容': batchPatients.length },
+      { '项目': '待调查', '内容': batchPatients.filter(p => p.status === '待调查').length },
+      { '项目': '调查中', '内容': batchPatients.filter(p => p.status === '调查中').length },
+      { '项目': '已结案', '内容': batchPatients.filter(p => p.status === '已结案').length },
+      { '项目': '---', '内容': '---' },
+      { '项目': '二、样本统计', '内容': '' },
+      { '项目': '样本总数', '内容': batchSamples.length },
+      { '项目': '已采样', '内容': batchSamples.filter(s => s.status === '已采样').length },
+      { '项目': '已送检', '内容': batchSamples.filter(s => s.status === '已送检').length },
+      { '项目': '已接收', '内容': batchSamples.filter(s => s.status === '已接收').length },
+      { '项目': '已出结果', '内容': batchSamples.filter(s => s.status === '已出结果').length },
+      { '项目': '阳性样本', '内容': batchSamples.filter(s => s.result === '阳性').length },
+      { '项目': '---', '内容': '---' },
+      { '项目': '三、随访统计', '内容': '' },
+      { '项目': '随访计划数', '内容': batchFollowUps.length },
+      { '项目': '待随访', '内容': batchFollowUps.filter(f => f.status === '待随访').length },
+      { '项目': '随访中', '内容': batchFollowUps.filter(f => f.status === '随访中').length },
+      { '项目': '已完成', '内容': batchFollowUps.filter(f => f.status === '已完成').length },
+      { '项目': '已失访', '内容': batchFollowUps.filter(f => f.status === '已失访').length },
+      { '项目': '---', '内容': '---' },
+      { '项目': '四、重点场所统计', '内容': '' },
+      { '项目': '巡查次数', '内容': batchPlaces.length },
+      { '项目': '学校', '内容': batchPlaces.filter(p => p.placeType === '学校').length },
+      { '项目': '市场', '内容': batchPlaces.filter(p => p.placeType === '市场').length },
+      { '项目': '养老机构', '内容': batchPlaces.filter(p => p.placeType === '养老机构').length },
+      { '项目': '待整改', '内容': batchPlaces.filter(p => p.status === '待整改').length },
+      { '项目': '已整改', '内容': batchPlaces.filter(p => p.status === '已整改').length }
+    ];
+    const ws1 = XLSX.utils.json_to_sheet(summaryData);
+    ws1['!cols'] = [{ wch: 20 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws1, '上报汇总');
+
+    const caseHeaders = ['病例编号', '姓名', '性别', '年龄', '身份证号', '联系电话', '现住址', '疾病类型', '发病日期', '报告日期', '症状', '状态', '登记时间'];
+    const caseData = batchPatients.length > 0 ? batchPatients.map(p => ({
+      '病例编号': p.caseNo,
+      '姓名': p.name,
+      '性别': p.gender,
+      '年龄': p.age,
+      '身份证号': p.idCard,
+      '联系电话': p.phone,
+      '现住址': p.address,
+      '疾病类型': p.diseaseType,
+      '发病日期': p.onsetDate,
+      '报告日期': p.reportDate,
+      '症状': p.symptoms.join('、'),
+      '状态': p.status,
+      '登记时间': p.createdAt
+    })) : [Object.fromEntries(caseHeaders.map(h => [h, '']))];
+    const ws2 = XLSX.utils.json_to_sheet(caseData);
+    ws2['!cols'] = caseHeaders.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws2, '病例明细');
+
+    const sampleHeaders = ['样本编号', '病例编号', '患者姓名', '疾病类型', '样本类型', '采样日期', '采样人', '送检日期', '送检人', '接收日期', '接收人', '检测机构', '检测结果', '结果日期', '状态'];
+    const sampleData = batchSamples.length > 0 ? batchSamples.map(s => ({
+      '样本编号': s.sampleNo,
+      '病例编号': s.caseNo || '',
+      '患者姓名': s.patientName,
+      '疾病类型': s.diseaseType || '',
+      '样本类型': s.sampleType,
+      '采样日期': s.collectDate,
+      '采样人': s.collector,
+      '送检日期': s.sendDate || '',
+      '送检人': s.sender || '',
+      '接收日期': s.receiveDate || '',
+      '接收人': s.receiver || '',
+      '检测机构': s.labName || '',
+      '检测结果': s.result || '',
+      '结果日期': s.resultDate || '',
+      '状态': s.status
+    })) : [Object.fromEntries(sampleHeaders.map(h => [h, '']))];
+    const ws3 = XLSX.utils.json_to_sheet(sampleData);
+    ws3['!cols'] = sampleHeaders.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws3, '样本明细');
+
+    const followupHeaders = ['随访编号', '病例ID', '患者姓名', '联系电话', '疾病类型', '计划随访日期', '随访类型', '随访状态', '通话结果', '健康状况', '失访原因', '随访时间', '操作人员', '备注'];
+    const followupData = batchFollowUps.length > 0 ? batchFollowUps.map(f => ({
+      '随访编号': f.id,
+      '病例ID': f.patientId,
+      '患者姓名': f.patientName,
+      '联系电话': f.phone,
+      '疾病类型': f.diseaseType,
+      '计划随访日期': f.planDate,
+      '随访类型': f.followUpType,
+      '随访状态': f.status,
+      '通话结果': f.callResult || '',
+      '健康状况': f.healthStatus || '',
+      '失访原因': f.lossReason || '',
+      '随访时间': f.followUpTime || '',
+      '操作人员': f.operator || '',
+      '备注': f.remarks || ''
+    })) : [Object.fromEntries(followupHeaders.map(h => [h, '']))];
+    const ws4 = XLSX.utils.json_to_sheet(followupData);
+    ws4['!cols'] = followupHeaders.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws4, '随访明细');
+
+    const placeHeaders = ['场所名称', '场所类型', '地址', '联系人', '联系电话', '巡查日期', '巡查人员', '合格项数', '不合格项数', '发现问题', '整改要求', '状态', '下次巡查日期'];
+    const placeData = batchPlaces.length > 0 ? batchPlaces.map(p => ({
+      '场所名称': p.placeName,
+      '场所类型': p.placeType,
+      '地址': p.address,
+      '联系人': p.contactPerson,
+      '联系电话': p.contactPhone,
+      '巡查日期': p.inspectDate,
+      '巡查人员': p.inspector,
+      '合格项数': p.items.filter(i => i.result === '合格').length,
+      '不合格项数': p.items.filter(i => i.result === '不合格').length,
+      '发现问题': p.issues || '',
+      '整改要求': p.rectification || '',
+      '状态': p.status,
+      '下次巡查日期': p.nextInspectDate || ''
+    })) : [Object.fromEntries(placeHeaders.map(h => [h, '']))];
+    const ws5 = XLSX.utils.json_to_sheet(placeData);
+    ws5['!cols'] = placeHeaders.map(() => ({ wch: 15 }));
+    XLSX.utils.book_append_sheet(wb, ws5, '重点场所');
+
+    XLSX.writeFile(wb, filename);
+    message.success(`已重新导出批次 ${batch.batchNo}：${filename}`);
   };
 
   return (
@@ -687,11 +868,37 @@ const ReportModule: React.FC = () => {
               children: (
                 <div>
                   <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                    <Col span={24}>
+                      <Card size="small">
+                        <Space size={16} wrap>
+                          <span style={{ color: '#666' }}>风险等级筛选：</span>
+                          <Radio.Group
+                            value={riskLevelFilter}
+                            onChange={(e) => setRiskLevelFilter(e.target.value)}
+                            size="middle"
+                          >
+                            <Radio.Button value="全部">全部</Radio.Button>
+                            <Radio.Button value="高">
+                              <span style={{ color: '#ff4d4f' }}>高风险</span>
+                            </Radio.Button>
+                            <Radio.Button value="中">
+                              <span style={{ color: '#faad14' }}>中风险</span>
+                            </Radio.Button>
+                            <Radio.Button value="低">
+                              <span style={{ color: '#1677ff' }}>低风险</span>
+                            </Radio.Button>
+                          </Radio.Group>
+                          <span style={{ color: '#999' }}>
+                            共 {filteredAbnormalData.length} 条记录
+                          </span>
+                        </Space>
+                      </Card>
+                    </Col>
                     <Col span={6}>
                       <Card size="small">
                         <Statistic
                           title="高风险"
-                          value={abnormalData.filter(a => a.level === '高').length}
+                          value={filteredAbnormalData.filter(a => a.level === '高').length}
                           valueStyle={{ color: '#ff4d4f' }}
                         />
                       </Card>
@@ -700,7 +907,7 @@ const ReportModule: React.FC = () => {
                       <Card size="small">
                         <Statistic
                           title="中风险"
-                          value={abnormalData.filter(a => a.level === '中').length}
+                          value={filteredAbnormalData.filter(a => a.level === '中').length}
                           valueStyle={{ color: '#faad14' }}
                         />
                       </Card>
@@ -709,7 +916,7 @@ const ReportModule: React.FC = () => {
                       <Card size="small">
                         <Statistic
                           title="低风险"
-                          value={abnormalData.filter(a => a.level === '低').length}
+                          value={filteredAbnormalData.filter(a => a.level === '低').length}
                           valueStyle={{ color: '#1677ff' }}
                         />
                       </Card>
@@ -718,7 +925,7 @@ const ReportModule: React.FC = () => {
                       <Card size="small">
                         <Statistic
                           title="待处理"
-                          value={stats.pendingAbnormal}
+                          value={filteredAbnormalData.filter(a => a.status !== '已处理').length}
                           valueStyle={{ color: '#722ed1' }}
                         />
                       </Card>
@@ -727,7 +934,7 @@ const ReportModule: React.FC = () => {
 
                   <Table
                     columns={abnormalColumns}
-                    dataSource={abnormalData}
+                    dataSource={filteredAbnormalData}
                     rowKey="id"
                     pagination={{
                       showSizeChanger: true,
@@ -739,7 +946,7 @@ const ReportModule: React.FC = () => {
                   <Divider plain orientation="left">待处理异常详情</Divider>
                   <List
                     itemLayout="horizontal"
-                    dataSource={abnormalData.filter(a => a.status !== '已处理')}
+                    dataSource={filteredAbnormalData.filter(a => a.status !== '已处理')}
                     renderItem={(item) => (
                       <List.Item
                         actions={[
@@ -906,6 +1113,69 @@ const ReportModule: React.FC = () => {
                       </Card>
                     </Col>
                   </Row>
+
+                  <Divider orientation="left" plain style={{ marginTop: 24 }}>
+                    <Space><FileExcelOutlined /> 上报批次记录</Space>
+                  </Divider>
+
+                  <Card size="small">
+                    <Table<ReportBatch>
+                      size="small"
+                      dataSource={reportBatches}
+                      rowKey="id"
+                      pagination={{ pageSize: 5, showSizeChanger: false }}
+                      columns={[
+                        {
+                          title: '批次号',
+                          dataIndex: 'batchNo',
+                          width: 160,
+                          render: (t) => <Tag color="blue">{t}</Tag>
+                        },
+                        {
+                          title: '统计范围',
+                          key: 'range',
+                          width: 220,
+                          render: (_, r) => `${r.startDate} ~ ${r.endDate}`
+                        },
+                        { title: '病例数', dataIndex: 'caseCount', width: 70 },
+                        { title: '样本数', dataIndex: 'sampleCount', width: 70 },
+                        { title: '随访数', dataIndex: 'followUpCount', width: 70 },
+                        { title: '场所数', dataIndex: 'placeCount', width: 70 },
+                        { title: '生成时间', dataIndex: 'generateTime', width: 160 },
+                        { title: '操作人', dataIndex: 'operator', width: 90 },
+                        {
+                          title: '文件',
+                          dataIndex: 'fileName',
+                          width: 200,
+                          ellipsis: true,
+                          render: (t) => <Tooltip title={t}>{t}</Tooltip>
+                        },
+                        {
+                          title: '操作',
+                          key: 'action',
+                          width: 100,
+                          render: (_, r) => (
+                            <Space>
+                              <Button
+                                type="link"
+                                size="small"
+                                icon={<ExportOutlined />}
+                                onClick={() => handleReExportBatch(r)}
+                              >
+                                重新导出
+                              </Button>
+                            </Space>
+                          )
+                        }
+                      ]}
+                    />
+                    {reportBatches.length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '30px 0', color: '#999' }}>
+                        <FileExcelOutlined style={{ fontSize: 40, opacity: 0.4 }} />
+                        <div style={{ marginTop: 10 }}>暂无上报批次记录</div>
+                      </div>
+                    )}
+                  </Card>
                 </div>
               )
             }

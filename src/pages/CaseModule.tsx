@@ -1,17 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Table, Button, Space, Input, Select, DatePicker, Tag, Modal,
   Form, InputNumber, Radio, Upload, message, Divider, Descriptions,
-  Card, Row, Col, Statistic, Popconfirm, Tooltip, Checkbox, List
+  Card, Row, Col, Statistic, Popconfirm, Tooltip, Checkbox, List,
+  Timeline
 } from 'antd';
 import {
   PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined,
   EyeOutlined, UploadOutlined, FileTextOutlined, DownloadOutlined,
   ExclamationCircleOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  FileOutlined, FolderOpenOutlined
+  FileOutlined, FolderOpenOutlined, TeamOutlined, SendOutlined,
+  InboxOutlined, FileDoneOutlined, PhoneOutlined, ExperimentOutlined
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import type { Patient, ContactRecord, Attachment } from '@/types';
+import type { Patient, ContactRecord, Attachment, Sample, FollowUp } from '@/types';
 import { storage, genId, createFollowUpForPatient } from '@/store';
 import dayjs from 'dayjs';
 
@@ -47,6 +49,8 @@ const statusMap: Record<string, { color: string; icon: React.ReactNode }> = {
 const CaseModule: React.FC = () => {
   const [data, setData] = useState<Patient[]>([]);
   const [filteredData, setFilteredData] = useState<Patient[]>([]);
+  const [allSamples, setAllSamples] = useState<Sample[]>([]);
+  const [allFollowUps, setAllFollowUps] = useState<FollowUp[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
   const [editPatient, setEditPatient] = useState<Patient | null>(null);
@@ -63,9 +67,107 @@ const CaseModule: React.FC = () => {
 
   useEffect(() => {
     const list = storage.getPatients();
+    const samples = storage.getSamples();
+    const followUps = storage.getFollowUps();
     setData(list);
     setFilteredData(list);
+    setAllSamples(samples);
+    setAllFollowUps(followUps);
   }, []);
+
+  const relatedSamples = useMemo(() => {
+    if (!viewPatient) return [];
+    return allSamples.filter(s => s.patientId === viewPatient.id);
+  }, [viewPatient, allSamples]);
+
+  const relatedFollowUps = useMemo(() => {
+    if (!viewPatient) return [];
+    return allFollowUps.filter(f => f.patientId === viewPatient.id);
+  }, [viewPatient, allFollowUps]);
+
+  const timelineEvents = useMemo(() => {
+    if (!viewPatient) return [];
+    const events: any[] = [];
+
+    events.push({
+      date: viewPatient.reportDate,
+      type: 'case',
+      title: '病例报告',
+      description: `病例 ${viewPatient.caseNo} 已报告，疾病类型：${viewPatient.diseaseType}`,
+      icon: <FileTextOutlined />,
+      color: 'blue'
+    });
+
+    relatedSamples.forEach(s => {
+      events.push({
+        date: s.collectDate,
+        type: 'sample',
+        title: '样本采集',
+        description: `${s.sampleNo} - ${s.sampleType}，采样人：${s.collector}`,
+        icon: <TeamOutlined />,
+        color: 'cyan',
+        data: s
+      });
+      if (s.sendDate) {
+        events.push({
+          date: s.sendDate,
+          type: 'sample',
+          title: '样本送检',
+          description: `${s.sampleNo} 已送检，送检人：${s.sender || '-'}`,
+          icon: <SendOutlined />,
+          color: 'purple',
+          data: s
+        });
+      }
+      if (s.receiveDate) {
+        events.push({
+          date: s.receiveDate,
+          type: 'sample',
+          title: '样本接收',
+          description: `${s.sampleNo} 已由 ${s.labName || '-'} 接收，接收人：${s.receiver || '-'}`,
+          icon: <InboxOutlined />,
+          color: 'geekblue',
+          data: s
+        });
+      }
+      if (s.resultDate && s.result) {
+        events.push({
+          date: s.resultDate,
+          type: 'sample',
+          title: '检测结果',
+          description: `${s.sampleNo} 检测结果：${s.result}`,
+          icon: <FileDoneOutlined />,
+          color: s.result === '阳性' ? 'red' : 'green',
+          data: s
+        });
+      }
+    });
+
+    relatedFollowUps.forEach(f => {
+      events.push({
+        date: f.planDate,
+        type: 'followup',
+        title: '随访计划',
+        description: `${f.followUpType}随访，计划日期：${f.planDate}，状态：${f.status}`,
+        icon: <PhoneOutlined />,
+        color: f.status === '已失访' ? 'orange' : 'lime',
+        data: f
+      });
+      if (f.followUpTime) {
+        events.push({
+          date: f.followUpTime,
+          type: 'followup',
+          title: '随访完成',
+          description: `通话结果：${f.callResult || '-'}，${f.healthStatus || ''}`,
+          icon: <CheckCircleOutlined />,
+          color: 'green',
+          data: f
+        });
+      }
+    });
+
+    return events.sort((a, b) => dayjs(a.date).unix() - dayjs(b.date).unix());
+  }, [viewPatient, relatedSamples, relatedFollowUps]);
 
   const handleSearch = (values: any) => {
     let result = [...data];
@@ -129,6 +231,28 @@ const CaseModule: React.FC = () => {
   const openDetailModal = (record: Patient) => {
     setViewPatient(record);
     setDetailVisible(true);
+  };
+
+  const handleCancel = async () => {
+    if (!editPatient && tempCaseId && attachmentList.length > 0) {
+      Modal.confirm({
+        title: '确认取消',
+        content: '取消后，已上传的附件将被删除，确定要取消吗？',
+        okText: '确定取消',
+        cancelText: '继续编辑',
+        onOk: async () => {
+          try {
+            await window.api.cleanupTempAttachments({ caseId: tempCaseId });
+            message.info('已清理临时附件');
+          } catch (e) {
+            console.error('清理临时附件失败:', e);
+          }
+          setModalVisible(false);
+        }
+      });
+    } else {
+      setModalVisible(false);
+    }
   };
 
   const handleSave = async () => {
@@ -572,7 +696,7 @@ const CaseModule: React.FC = () => {
         open={modalVisible}
         width={900}
         onOk={handleSave}
-        onCancel={() => setModalVisible(false)}
+        onCancel={handleCancel}
         okText="保存"
         cancelText="取消"
         zIndex={1000}
@@ -1006,6 +1130,62 @@ const CaseModule: React.FC = () => {
             ) : (
               <div style={{ color: '#999', padding: 12, textAlign: 'center' }}>
                 暂无附件
+              </div>
+            )}
+
+            <Divider plain orientation="left">
+              <Space><ExperimentOutlined /> 处置过程时间线 ({timelineEvents.length}条记录)
+              </Space>
+            </Divider>
+            {timelineEvents.length > 0 ? (
+              <Timeline
+                mode="left"
+                items={timelineEvents.map((event, idx) => ({
+                  color: event.color,
+                  dot: event.icon,
+                  children: (
+                    <div
+                      style={{ cursor: event.data ? 'pointer' : 'default' }}
+                      onClick={() => {
+                        if (event.data) {
+                          if (event.type === 'sample') {
+                            message.info(`样本详情：${event.data.sampleNo}，状态：${event.data.status}`);
+                          } else if (event.type === 'followup') {
+                            message.info(`随访详情：${event.data.id}，状态：${event.data.status}`);
+                          }
+                        }
+                      }}
+                    >
+                      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                        <div style={{ fontWeight: 500 }}>
+                          {event.title}
+                          {event.data && (
+                            <Tag
+                              color="blue"
+                              style={{ marginLeft: 8, fontSize: 11 }}
+                            >
+                              点击查看
+                            </Tag>
+                          )}
+                        </div>
+                        <div style={{ color: '#666', fontSize: 13 }}>
+                          {event.description}
+                        </div>
+                        <div style={{ color: '#999', fontSize: 12 }}>
+                          {event.date}
+                        </div>
+                      </Space>
+                    </div>
+                  )
+                }))}
+              />
+            ) : (
+              <div style={{ color: '#999', padding: 20, textAlign: 'center' }}>
+                <ClockCircleOutlined style={{ fontSize: 30, opacity: 0.4 }} />
+                <div style={{ marginTop: 8 }}>暂无处置过程记录</div>
+                <div style={{ fontSize: 12, marginTop: 4 }}>
+                  该病例暂未关联采样或随访记录
+                </div>
               </div>
             )}
           </div>

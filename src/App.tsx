@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Layout, Menu, Avatar } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Layout, Menu, Avatar, message } from 'antd';
 import {
   FileAddOutlined,
   PhoneOutlined,
@@ -7,7 +7,8 @@ import {
   BankOutlined,
   BarChartOutlined,
   SafetyOutlined,
-  UserOutlined
+  UserOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
 import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import CaseModule from './pages/CaseModule';
@@ -15,6 +16,7 @@ import FollowUpModule from './pages/FollowUpModule';
 import SampleModule from './pages/SampleModule';
 import PlaceModule from './pages/PlaceModule';
 import ReportModule from './pages/ReportModule';
+import { scanAllAbnormals } from './store';
 
 const { Header, Sider, Content } = Layout;
 
@@ -50,6 +52,19 @@ const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    const results = scanAllAbnormals();
+    if (results.length > 0) {
+      message.warning(
+        {
+          icon: <WarningOutlined />,
+          content: `扫描发现 ${results.length} 条异常记录，已自动加入异常清单`,
+          duration: 5
+        }
+      );
+    }
+  }, []);
 
   const selectedKey = menuItems.some(item => item.key === location.pathname)
     ? location.pathname

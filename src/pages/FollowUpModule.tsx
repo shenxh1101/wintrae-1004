@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { FollowUp } from '@/types';
-import { storage, genId } from '@/store';
+import { storage, genId, checkFollowUpAbnormal } from '@/store';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
@@ -144,6 +144,17 @@ const FollowUpModule: React.FC = () => {
       filterData(updated, statusFilter, searchForm.getFieldsValue());
       storage.saveFollowUps(updated);
       message.success('随访记录保存成功');
+
+      if (newStatus === '已失访') {
+        const updatedRecord = updated.find(f => f.id === editRecord!.id);
+        if (updatedRecord) {
+          const abnormal = checkFollowUpAbnormal(updatedRecord);
+          if (abnormal) {
+            message.warning(`随访已标记为失访，已自动加入异常清单`);
+          }
+        }
+      }
+
       setModalVisible(false);
     } catch {
       // 表单验证错误

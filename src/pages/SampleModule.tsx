@@ -12,7 +12,7 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import type { Sample, Patient } from '@/types';
-import { storage, genId } from '@/store';
+import { storage, genId, checkSampleAbnormal } from '@/store';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
@@ -167,6 +167,14 @@ const SampleModule: React.FC = () => {
       setData(updated);
       setFilteredData(updated);
       storage.saveSamples(updated);
+
+      if (baseSample.result === '阳性') {
+        const abnormal = checkSampleAbnormal(baseSample);
+        if (abnormal) {
+          message.warning(`检测结果为阳性，已自动加入异常清单`);
+        }
+      }
+
       setModalVisible(false);
     } catch {
       // 表单验证错误
@@ -341,7 +349,7 @@ const SampleModule: React.FC = () => {
                     patient: p
                   }))}
                   onChange={(value, option) => {
-                    if (value && option?.patient) {
+                    if (value && option && !Array.isArray(option) && option.patient) {
                       const p = option.patient as Patient;
                       form.setFieldsValue({
                         patientId: p.id,

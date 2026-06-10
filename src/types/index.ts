@@ -123,6 +123,23 @@ export interface AbnormalItem {
   level: '高' | '中' | '低';
   status: '待处理' | '处理中' | '已处理';
   handler?: string;
+  sourceId?: string;
+  sourceType?: 'sample' | 'followup' | 'place';
+}
+
+export interface ReportBatch {
+  id: string;
+  batchNo: string;
+  startDate: string;
+  endDate: string;
+  generateTime: string;
+  caseCount: number;
+  sampleCount: number;
+  followUpCount: number;
+  placeCount: number;
+  filePath: string;
+  fileName: string;
+  operator: string;
 }
 
 export type ModuleKey = 'case' | 'followup' | 'sample' | 'place' | 'report';

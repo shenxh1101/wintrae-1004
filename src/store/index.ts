@@ -1,5 +1,5 @@
 import type {
-  Patient, FollowUp, Sample, PlaceInspection, AbnormalItem
+  Patient, FollowUp, Sample, PlaceInspection, AbnormalItem, ReportBatch
 } from '@/types';
 import dayjs from 'dayjs';
 
@@ -8,7 +8,8 @@ const KEYS = {
   FOLLOWUPS: 'cdc_followups',
   SAMPLES: 'cdc_samples',
   PLACES: 'cdc_places',
-  ABNORMALS: 'cdc_abnormals'
+  ABNORMALS: 'cdc_abnormals',
+  REPORT_BATCHES: 'cdc_report_batches'
 } as const;
 
 const FOLLOWUP_INTERVALS: Record<string, number> = {
@@ -248,6 +249,7 @@ function getStore(): any {
   const samples = localStorage.getItem(KEYS.SAMPLES);
   const places = localStorage.getItem(KEYS.PLACES);
   const abnormals = localStorage.getItem(KEYS.ABNORMALS);
+  const reportBatches = localStorage.getItem(KEYS.REPORT_BATCHES);
 
   if (!patients) {
     localStorage.setItem(KEYS.PATIENTS, JSON.stringify(mockPatients));
@@ -264,17 +266,23 @@ function getStore(): any {
   if (!abnormals) {
     localStorage.setItem(KEYS.ABNORMALS, JSON.stringify(mockAbnormals));
   }
+  if (!reportBatches) {
+    localStorage.setItem(KEYS.REPORT_BATCHES, JSON.stringify([]));
+  }
 
   store = {
     patients: JSON.parse(localStorage.getItem(KEYS.PATIENTS) || '[]'),
     followUps: JSON.parse(localStorage.getItem(KEYS.FOLLOWUPS) || '[]'),
     samples: JSON.parse(localStorage.getItem(KEYS.SAMPLES) || '[]'),
     places: JSON.parse(localStorage.getItem(KEYS.PLACES) || '[]'),
-    abnormals: JSON.parse(localStorage.getItem(KEYS.ABNORMALS) || '[]')
+    abnormals: JSON.parse(localStorage.getItem(KEYS.ABNORMALS) || '[]'),
+    reportBatches: JSON.parse(localStorage.getItem(KEYS.REPORT_BATCHES) || '[]')
   };
 
   return store;
 }
+
+export const genId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
 
 export const storage = {
   getPatients(): Patient[] {
@@ -311,10 +319,107 @@ export const storage = {
   },
   saveAbnormals(data: AbnormalItem[]) {
     localStorage.setItem(KEYS.ABNORMALS, JSON.stringify(data));
+  },
+  getReportBatches(): ReportBatch[] {
+    const store = getStore();
+    return store.reportBatches;
+  },
+  saveReportBatches(data: ReportBatch[]) {
+    localStorage.setItem(KEYS.REPORT_BATCHES, JSON.stringify(data));
   }
 };
 
-export const genId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+export const checkAndAddAbnormal = (item: Omit<AbnormalItem, 'id' | 'status'>): AbnormalItem | null => {
+  const abnormals = storage.getAbnormals();
+  const exists = abnormals.some(
+    a => a.sourceId === item.sourceId && a.sourceType === item.sourceType && a.status !== '已处理'
+  );
+  if (exists) return null;
+
+  const newItem: AbnormalItem = {
+    ...item,
+    id: genId(),
+    status: '待处理'
+  };
+  abnormals.unshift(newItem);
+  storage.saveAbnormals(abnormals);
+  return newItem;
+};
+
+export const checkSampleAbnormal = (sample: Sample): AbnormalItem | null => {
+  if (sample.result === '阳性') {
+    return checkAndAddAbnormal({
+      type: '样本异常',
+      name: `${sample.patientName} - ${sample.sampleNo}`,
+      reason: '检测结果为阳性',
+      date: sample.resultDate || sample.collectDate,
+      level: '高',
+      sourceId: sample.id,
+      sourceType: 'sample'
+    });
+  }
+  return null;
+};
+
+export const checkFollowUpAbnormal = (followUp: FollowUp): AbnormalItem | null => {
+  if (followUp.status === '已失访') {
+    return checkAndAddAbnormal({
+      type: '随访异常',
+      name: `${followUp.patientName} - ${followUp.id}`,
+      reason: followUp.lossReason || '随访失访',
+      date: followUp.followUpTime || followUp.planDate,
+      level: '中',
+      sourceId: followUp.id,
+      sourceType: 'followup'
+    });
+  }
+  return null;
+};
+
+export const checkPlaceAbnormal = (place: PlaceInspection): AbnormalItem | null => {
+  if (place.status === '待整改') {
+    return checkAndAddAbnormal({
+      type: '场所异常',
+      name: `${place.placeName}`,
+      reason: place.issues || '巡查发现问题待整改',
+      date: place.inspectDate,
+      level: '中',
+      sourceId: place.id,
+      sourceType: 'place'
+    });
+  }
+  return null;
+};
+
+export const scanAllAbnormals = (): AbnormalItem[] => {
+  const results: AbnormalItem[] = [];
+  const samples = storage.getSamples();
+  const followUps = storage.getFollowUps();
+  const places = storage.getPlaces();
+
+  samples.forEach(s => {
+    if (s.result === '阳性') {
+      const r = checkSampleAbnormal(s);
+      if (r) results.push(r);
+    }
+  });
+
+  followUps.forEach(f => {
+    if (f.status === '已失访') {
+      const r = checkFollowUpAbnormal(f);
+      if (r) results.push(r);
+    }
+  });
+
+  places.forEach(p => {
+    if (p.status === '待整改') {
+      const r = checkPlaceAbnormal(p);
+      if (r) results.push(r);
+    }
+  });
+
+  return results;
+};
 
 export const generateFollowUpPlan = (patient: Patient): FollowUp | null => {
   const existingFollowUps = storage.getFollowUps();

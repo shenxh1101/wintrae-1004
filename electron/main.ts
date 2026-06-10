@@ -147,3 +147,36 @@ ipcMain.handle('delete-attachment', async (_event, data: { filePath: string }) =
 ipcMain.handle('get-attachment-path', () => {
   return getAttachmentsDir()
 })
+
+ipcMain.handle('cleanup-temp-attachments', async (_event, data: { caseId: string }) => {
+  try {
+    const attachmentsDir = getAttachmentsDir()
+    const caseDir = path.join(attachmentsDir, data.caseId)
+    if (fs.existsSync(caseDir)) {
+      fs.rmSync(caseDir, { recursive: true, force: true })
+      return { success: true }
+    }
+    return { success: true, message: '目录不存在，无需清理' }
+  } catch (error: any) {
+    return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('rename-attachment-dir', async (_event, data: { oldCaseId: string; newCaseId: string }) => {
+  try {
+    const attachmentsDir = getAttachmentsDir()
+    const oldDir = path.join(attachmentsDir, data.oldCaseId)
+    const newDir = path.join(attachmentsDir, data.newCaseId)
+
+    if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+      fs.renameSync(oldDir, newDir)
+      return { success: true, newDir }
+    }
+    if (!fs.existsSync(oldDir)) {
+      return { success: true, message: '原目录不存在' }
+    }
+    return { success: false, error: '目标目录已存在' }
+  } catch (error: any) {
+    return { success: false, error: error.message }
+  }
+})

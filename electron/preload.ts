@@ -22,7 +22,13 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('delete-attachment', data),
 
   getAttachmentPath: () =>
-    ipcRenderer.invoke('get-attachment-path')
+    ipcRenderer.invoke('get-attachment-path'),
+
+  cleanupTempAttachments: (data: { caseId: string }) =>
+    ipcRenderer.invoke('cleanup-temp-attachments', data),
+
+  renameAttachmentDir: (data: { oldCaseId: string; newCaseId: string }) =>
+    ipcRenderer.invoke('rename-attachment-dir', data)
 })
 
 declare global {
@@ -40,6 +46,8 @@ declare global {
       exportAttachment: (data: { filePath: string; fileName: string }) => Promise<any>
       deleteAttachment: (data: { filePath: string }) => Promise<any>
       getAttachmentPath: () => Promise<string>
+      cleanupTempAttachments: (data: { caseId: string }) => Promise<any>
+      renameAttachmentDir: (data: { oldCaseId: string; newCaseId: string }) => Promise<any>
     }
   }
 }
